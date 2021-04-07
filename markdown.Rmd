@@ -1,0 +1,67 @@
+###Markdown document for section "About" on the shinyapp - to describe dataset###
+
+---
+title: "About Dataset"
+author: "Filip Baumgartner"
+---
+
+```{r load, include=FALSE}
+autobazar_shiny <- read.csv("data/autobazar_shiny_final.csv", encoding="UTF-8", header=T)
+library(visdat)
+```
+
+### Contact:
+
+If you would like to obtain this dataset, report any issues, provide some new ideas or anything else, please contact me via:
+
+1. LinkedIn: [Filip Baumgartner](https://www.linkedin.com/in/filip-baumgartner/)
+2. E-mail: baumgartner.filip [at] gmail.com
+
+### About Dataset:
+This dataset is a result of my practicing of web-scraping followed by data cleaning, filtering and visualizing in R.  
+[www.AutoBazar.eu](www.autobazar.eu) is one of the biggest and mainly most popular Slovak website focused on selling offers of used cars at our Slovak market.
+Dataset contains around 37 000 rows, however it does not include all data from AutoBazar.eu, due to some selections that were made.
+
+**Selections:**  
+1. only Slovak offers in EUR currency  
+2. only cars (no motorbikes, trucks etc.)  
+3. only undamaged cars / cars without an accident  
+
+### About Variables:
+
+Dataset consists of **12 variables:**
+
+1. *$brand* = name of the exact car make
+2. *$model* = name of the exact car model; model's names are standardized for comparison purposes
+3. *$name_data* = the name of the model shown exactly as on the website (this variable was not used for visualization purposes, because it varies a lot and thus variable "model" with standardized name was rather used)
+4. *$price_data* = prices 
+5. *$year_data* = year, when a car was manufactured
+6. *$region_data* = (Slovak) region, where a car is registered
+7. *$diesel_data* = type of fuel (Gasoline, Diesel...)
+8. *$transmission_data* = type of transmission
+9. *$km_data* = mileage data in km (how many kilometers has a car driven)
+10. *$kw_data* = power data in kW (how many kilowatts an engine has)
+11. *$type_data* = type of car's body
+12. *$quattro* = 4x4 or not
+
+```{r str, include=TRUE}
+str(autobazar_shiny)
+```
+```{r summary, include=TRUE}
+summary(autobazar_shiny)
+```
+
+Naturally, despite the best effort - there are some missing data in the dataset. It usually comes from the missing values on the website or in the case, if some HTML codes of specific HTML nodes on the website are formatted a bit different than on the majority of website. However, there was some additional replacing and cleaning for regional data which contained the biggest part of all missing or wrong categorized data.
+To note, all missing data were remained in the dataset and observations containing them were not deleted. Despite that, missing data were treated directly in the case, when it was needed and would lead into wrong graph output. This way makes more sense, because we can remove missing data in a Boxplot of prices, but if we had deleted those observations so they would have been missed in the case of graphs showing total count, such as Bar plots.
+
+Anyway, there are **only 0.03 % of missing data**.
+You can see the **proportions of missing data of each variable** on this graph: 
+```{r vismiss, include=TRUE, message = FALSE}
+visdat::vis_miss(autobazar_shiny)
+```
+
+### Data Collecting:
+Unfortunately (or luckily?:), AutoBazar.eu does not offer any API that would allow us to connect directly at their data source and hence have them constantly imported and updated directly
+in the R environment. Thus, it was necessary to write a code for web-scrap system, which would read HTML outputs on every requested (sub)page. Happily, the **scrap is fully automatized** via several nested loops and so to update the dataset will be just a matter of clicking on "run the code" and waiting. Of course, it will stop working when some webpage elements get changed. 
+
+As I mentioned, web scrap code is fully automatized, which means it is capable of recognizing all models of every brand that are offered. Then it detects number of pages for each model's subpage and at the end it loops through all model's (sub)pages. Following, outputs HTML codes are read and then a bit updated and cleaned and saved into data matrix. 
