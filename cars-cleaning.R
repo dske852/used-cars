@@ -65,7 +65,7 @@ autobazar_all$type_data<-str_replace_all(autobazar_all$type_data, c("^x$" = "Com
 
 #deleting variables that should not be included in the car's dataset (motorbikes...)
 
-autobazar_all<-filter(autobazar_all, !model=="honda-africa" | !type_data == "Kabína" | !type_data == "Podvozok")
+autobazar_all<-filter(autobazar_all, !model=="honda-africa" & !type_data == "Kabína" & !type_data == "Podvozok")
 
 #editing names of brands and models into prettier and more correct way
 
