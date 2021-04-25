@@ -15,15 +15,27 @@ library(shinythemes)
 library(visdat)
 library(markdown)
 library(knitr)
+library(caret)
+library(e1071)
+library(ranger)
 
 autobazar_shiny <- read.csv("data/autobazar_shiny_final.csv", encoding="UTF-8", header=T)
+top10_brands <- read.csv("data/top10_brands.csv", encoding="UTF-8", header=T)
+forest <- readRDS("data/model.tree2_250.rds")
+model.lm <- readRDS("data/model.lm.rds")
+
+autobazar_shiny$price_data <- as.numeric(autobazar_shiny$price_data)
+autobazar_shiny$km_data <- as.numeric(autobazar_shiny$km_data)
+autobazar_shiny$kw_data <- as.numeric(autobazar_shiny$kw_data)
+autobazar_shiny$year_data <- as.numeric(autobazar_shiny$year_data)
+
 
 ui <- fluidPage(
   
 theme = shinythemes::shinytheme("cerulean"),  
-tags$h3("AutoBazar.eu Data Visualization"),
-
-"Dataset updated: 2nd April 2020", 
+tags$h3("AutoBazar.eu Data Visualization and Price Predictor"),
+tags$h5("Dataset updated: April 2021"), 
+"Be patient while Loading, please. Sometimes it may take a while.",
 navbarPage("Menu",
            tabPanel("Visualization",
 titlePanel("Select Inputs:"),
@@ -46,7 +58,7 @@ fluidRow(
     conditionalPanel(condition = "input.oput == 'Prices' || input.oput == 'Counts'", 
         awesomeRadio(
         inputId = "by",
-        label = "Displayed by:",
+        label = "Grouped by:",
         choices = c("Brands", "Models"),
         selected = "Models"
     )),
@@ -59,6 +71,15 @@ fluidRow(
                                  "Mini"= "Mini","Mitsubishi" = "Mitsubishi","Nissan" = "Nissan","Opel" = "Opel","Peugeot" = "Peugeot","Porsche"= "Porsche","Renault" = "Renault","Seat" = "Seat","Smart" = "Smart","Subaru" = "Subaru","Suzuki"= "Suzuki","Tesla" = "Tesla","Toyota" = "Toyota","Volvo" = "Volvo", "Lexus" = "Lexus", "Maserati"="Maserati")),
                 selected = "Skoda"
     )),
+    
+    conditionalPanel(condition = "(input.by == 'Models' && input.comparison == 'No')",
+                     numericInput(
+                       inputId = "n",
+                       label = "Min Count of Offers:",
+                       value = 0,
+                       min = 0, max = 20
+                     ),
+                     p("!Update only in the case of too many (overlapping) labels!")),
     
     conditionalPanel(condition = "(input.by == 'Brands' && input.comparison == 'No' && input.oput == 'Counts') || (input.by == 'Brands' && input.comparison == 'No' && input.oput == 'Prices')",
                      multiInput(inputId = "brands",
@@ -77,7 +98,7 @@ fluidRow(
     conditionalPanel(condition = "input.oput == 'Distributions' && input.comparison == 'No'",
                      materialSwitch(inputId = "dist_gen",
                                  label = "General Distribution of All Observations:",
-                                 right = T,
+                            
                                  status = "primary",
                                  value = TRUE)),   
 
@@ -102,7 +123,7 @@ fluidRow(
     conditionalPanel(condition = "input.comparison == 'Yes' && input.by == 'Models' && (input.oput == 'Prices' || input.oput == 'Counts')",
                      numericInput(
                        inputId = "top_n",
-                       label = "Count of most numerous models to compare:",
+                       label = "Count of most offered models to compare:",
                        value = 5,
                        min = 1, max = 10
                      )),
@@ -120,7 +141,7 @@ conditionalPanel(condition = "input.oput == 'Scatter' && input.comparison == 'No
                  awesomeCheckbox(
                    label = "Log?",
                    inputId = "log_y",
-                   value = FALSE,
+                   value = FALSE
                  )
 ),
 
@@ -135,7 +156,7 @@ conditionalPanel(condition = "input.oput == 'Scatter' && input.comparison == 'No
                  awesomeCheckbox(
                    label = "Log?",
                    inputId = "log_x",
-                   value = FALSE,
+                   value = FALSE
                  )
 ),
     
@@ -220,10 +241,72 @@ conditionalPanel(condition = "input.oput == 'Scatter' && input.comparison == 'No
     
     )),
 
-    fluidRow(column(10,plotOutput("bar")), 
-             (column(2, uiOutput("legend")))
+    fluidRow(plotOutput("bar"), 
+             
 )),
-tabPanel("About",fluidRow(uiOutput("markdown")))
+
+tabPanel("Price Predictor",
+         fluidRow(column(4, 
+         pickerInput(inputId = "bar2",
+                     label = "Select Make (Brand):",
+                     choices = sort(c("Skoda" = "Skoda", "Audi"="Audi","BMW" = "Bmw","Ford" = "Ford", 
+                                      "VW" = "Volkswagen","Kia"= "Kia","Mercedes" = "Mercedes", 
+                                      "Opel" = "Opel","Peugeot" = "Peugeot","Renault" = "Renault")),
+                     selected = "Skoda"
+         ),
+         
+         numericInput(
+           inputId = "year_tree",
+           label = "Year:",
+           value = 2010,
+           min = 2000, max = 2020
+         ),
+         pickerInput(inputId = "type_factor",
+                     label = "Select Body:",
+                     choices = sort(c("Sedan" = "Sedan", "MPV" = "Mpv", "Limo" = "Limuzína", "Liftback" = "Liftback", 
+                                      "Hatchback" = "Hatchback", "Coupé" = "Coupé", "Combi" = "Combi", "Other" = "Iné")),
+                     selected = "Sedan"
+         )), 
+         column(4, pickerInput(inputId = "fuel_factor",
+                     label = "Select Fuel:",
+                     choices = sort(c("Gasoline" = "Benzín", "Diesel" = "Diesel", "Electro" = "Elektro")),
+                     selected = "Diesel"
+         ), 
+         
+         pickerInput(inputId = "transmission_factor",
+                     label = "Select Transmission:",
+                     choices = sort(c("Manual Gearbox" = "Manuál", "Automatic transmission" = "Automat")),
+                     selected = "Manuál"
+         ),  
+         
+         pickerInput(inputId = "quattro_factor",
+                     label = "4x4?:",
+                     choices = sort(c("Yes" = 1, "No" = 0)),
+                     selected = 0
+         ), 
+         numericInput(
+           inputId = "km_tree",
+           label = "Mileage (km):",
+           value = 250000,
+           min = 0, max = 700000, step=5000
+         ),   
+         numericInput(
+           inputId = "kw_tree",
+           label = "Power (kW):",
+           value = 80,
+           min = 0, max = 600
+         ))
+         
+         ),
+         fluidRow(
+           actionButton("go", "Predict"),
+           p("Predicted price:"),
+       tableOutput("tree"),
+       p("The real offers containing given parameters:"),
+       tableOutput("true")
+         )),
+tabPanel("About Price Predictor",fluidRow(uiOutput("modelmarkdown"))),
+tabPanel("About Dataset",fluidRow(uiOutput("markdown")))
 ))
 
 server <- function(input, output, session) {
@@ -236,6 +319,8 @@ server <- function(input, output, session) {
   observeEvent(input$oput == "Scatter" | input$oput == "Distributions", ignoreInit = T, {
     updateAwesomeRadio(session = session, inputId = "by", selected = "Brands")
   })
+  
+
   
     data <- reactive({
         if (input$all_types == TRUE & input$svk == FALSE & input$comparison == "No"){
@@ -289,19 +374,20 @@ server <- function(input, output, session) {
      }
    })  
        
+   
     output$bar <-  renderPlot({
         
         #autobazar%>%filter(brand == input$bar & year_data == as.numeric(input$num))%>%group_by(model)%>%count(model)%>%ggplot(.,aes(x=reorder(model,n), y=n, fill=model))+geom_bar(stat="identity")+coord_flip()+ theme(legend.position = "none")
         #data()%>%group_by(model)%>%count(model)%>%ggplot(.,aes(x=reorder(model,n), y=n, fill=model))+geom_bar(stat="identity")+coord_flip()+ theme(legend.position = "none")+labs(x="Model", y="Count", title=paste("Used cars for sell of brand",input$bar), subtitle=paste("Year(s) of production:", list(input$num)), caption="Source: www.AutoBazar.eu")
         if (input$oput == "Prices" & input$by == "Models" & input$comparison == "No"){
-            data()%>%group_by(model)%>%ggplot(.,aes(x=reorder(model,price_data), y=price_data, color=model))+geom_boxplot(na.rm=T, show.legend = FALSE)+stat_summary(fun=mean, geom="point", shape=20, size=3, color="darkred", fill="red")+coord_flip()+
-            stat_summary(fun=mean, geom="text", color="red", show.legend = FALSE, hjust=-0.1, aes( label=round(..y.., digits=0)))+labs(x="Model", y="EUR", title=paste("Boxplot: Prices of used cars; Brand:", input$bar), subtitle=paste("Manufacturing year(s):", list(input$num)), caption="Visualization by: filip-baumgartner.shinyapps.io/autobazar; Data source: www.AutoBazar.eu")  
+            data()%>%group_by(model)%>%mutate(n = n())%>%filter(n >= as.numeric(input$n))%>%ggplot(.,aes(x=reorder(model,price_data), y=price_data, color=model))+geom_boxplot(na.rm=T, show.legend = FALSE)+stat_summary(fun=mean, geom="point", shape=20, size=3, color="darkred", fill="red")+coord_flip()+
+            stat_summary(fun=mean, geom="text", color="red", show.legend = FALSE, hjust=-0.1, aes( label=round(..y.., digits=0)))+labs(x="Model", y="EUR", title=paste("Boxplot: Prices of used cars; Brand:", input$bar), subtitle="Red Dot = Mean Price", caption="Visualization by: filip-baumgartner.shinyapps.io/autobazar; Data source: www.AutoBazar.eu")  
     }else if (input$oput == "Counts" & input$by == "Models" & input$comparison == "No"){
-            data()%>%group_by(model)%>%count(model)%>%ggplot(.,aes(x=reorder(model,n), y=n, fill=model))+geom_bar(stat="identity")+geom_label(aes(label=n), label.size = 0.05)+coord_flip()+ theme(legend.position = "none")+
+            data()%>%group_by(model)%>%count(model)%>%filter(n >= as.numeric(input$n))%>%ggplot(.,aes(x=reorder(model,n), y=n, fill=model))+geom_bar(stat="identity")+geom_text(aes(label=n), check_overlap = T, hjust = -0.1, vjust=0.1)+ coord_flip()+theme(legend.position = "none")+
       labs(x="Model", y="Count", title=paste("Count of used cars for sell; Brand:", input$bar), subtitle=paste("Manufacturing year(s):", list(input$num)), caption="Visualization by: filip-baumgartner.shinyapps.io/autobazar; Data source: www.AutoBazar.eu")
     }else if(input$oput == "Prices" & input$by == "Brands" & input$comparison == "No"){
         data2()%>%group_by(brand)%>%ggplot(.,aes(x=reorder(brand,-price_data), y=price_data, color=brand))+geom_boxplot(na.rm=T, show.legend = FALSE)+stat_summary(fun=mean, geom="point", shape=20, size=3, color="red", fill="red")+coord_flip()+
-        stat_summary(fun=mean, geom="text", color="red", show.legend = FALSE, hjust=-0.1, aes( label=round(..y.., digits=0)))+labs(x="Brand", y="EUR", title="Boxplot: Prices of used cars", subtitle=paste("Manufacturing year(s):", list(input$num)), caption="Visualization by: filip-baumgartner.shinyapps.io/autobazar; Data source: www.AutoBazar.eu")  
+        stat_summary(fun=mean, geom="text", color="red", show.legend = FALSE, hjust=-0.1, aes( label=round(..y.., digits=0)))+labs(x="Brand", y="EUR", title="Boxplot: Prices of used cars", subtitle="Red Dot = Mean Price", caption="Visualization by: filip-baumgartner.shinyapps.io/autobazar; Data source: www.AutoBazar.eu")  
     }else if(input$oput == "Counts" & input$by == "Brands" & input$comparison == "No"){
         data2()%>%group_by(brand)%>%count(brand)%>%ggplot(.,aes(x=reorder(brand,n), y=n, fill=brand))+geom_bar(stat="identity")+geom_text(aes(label=n), check_overlap = T, hjust = -0.1, vjust=0.1)+coord_flip()+ theme(legend.position = "none")+
        labs(x="Brand", y="Count", title="Count of used cars for sell", subtitle=paste("Manufacturing year(s):", list(input$num)), caption="Visualization by: filip-baumgartner.shinyapps.io/autobazar; Data source: www.AutoBazar.eu") 
@@ -324,42 +410,58 @@ server <- function(input, output, session) {
       data5()%>%ggplot(.,aes(x=price_data, fill = brand))+geom_histogram( na.rm=T, binwidth = 5000)+ geom_vline(aes(xintercept=mean(price_data)),color="red", linetype="dashed", size=1)+theme(legend.position = "right")+
         geom_text(aes(label = "line = mean", x = mean(price_data), y=mean(price_data), angle=90), vjust = -0.3)+labs(x="EUR", y="Count", title="Distribution by price; bin = 5 000 EUR", subtitle=paste("Manufacturing year(s):", list(input$num)), caption="Visualization by: filip-baumgartner.shinyapps.io/autobazar; Data source: www.AutoBazar.eu")
       }else if(input$oput == "Counts" & input$by == "Models" & input$comparison == "Yes"){
-       data3()%>%filter(model %in% data4()$model)%>%group_by(get(input$comp_by))%>%ggplot(.,aes(x=model, fill=model))+geom_bar()+geom_text(stat='count', aes(label=..count..), hjust=-1)+facet_grid(brand~get(input$comp_by), scales="free")+coord_flip()+ theme(legend.position = "none")+
+       data3()%>%filter(model %in% data4()$model)%>%group_by(get(input$comp_by))%>%ggplot(.,aes(x=model, fill=model))+geom_bar()+geom_text(stat='count', aes(label=..count..), hjust=-0.1)+facet_grid(brand~get(input$comp_by), scales="free")+coord_flip()+ theme(legend.position = "none")+
         labs(x="Model", y="Count", title = "Count of used cars for sell", subtitle=paste("Manufacturing year(s):", list(input$num)), caption="Visualization by: filip-baumgartner.shinyapps.io/autobazar; Data source: www.AutoBazar.eu")
       }else if(input$oput == "Prices" & input$by == "Models" & input$comparison == "Yes"){
       data3()%>%filter(model %in% data4()$model)%>%group_by(get(input$comp_by))%>%ggplot(.,aes(x=reorder(model,price_data) , y=price_data, color=model))+geom_boxplot(na.rm=T, show.legend = FALSE)+stat_summary(fun=mean, geom="point", shape=20, size=3, color="red", fill="red")+facet_grid(brand~get(input$comp_by), scales="free")+coord_flip()+
-          stat_summary(fun=mean, geom="text", color="red", show.legend = FALSE, hjust=-0.1, aes( label=round(..y.., digits=0)))+labs(x="Model", y="EUR", title="Boxplot: Prices of used cars", subtitle=paste("Manufacturing year(s):", list(input$num)), caption="Visualization by: filip-baumgartner.shinyapps.io/autobazar; Data source: www.AutoBazar.eu") 
+          stat_summary(fun=mean, geom="text", color="red", show.legend = FALSE, hjust=-0.1, aes( label=round(..y.., digits=0)))+labs(x="Model", y="EUR", title="Boxplot: Prices of used cars", subtitle="Red Dot = Mean Price", caption="Visualization by: filip-baumgartner.shinyapps.io/autobazar; Data source: www.AutoBazar.eu") 
       }else if(input$oput == "Scatter" & input$log_x == FALSE & input$log_y == FALSE){
-        data5()%>%ggplot(., aes(x=get(input$scatter_x), y=get(input$scatter_y)))+geom_point()+stat_smooth(method = "lm", formula = y ~ x , size = 1)+
+        data5()%>%ggplot(., aes(x=get(input$scatter_x), y=get(input$scatter_y)))+geom_point(na.rm = T)+stat_smooth(method = "lm", formula = y ~ x , size = 1)+
           labs(x=input$scatter_x, y=input$scatter_y, main="Scatter plot", subtitle=paste("Manufacturing year(s):", list(input$num)), caption="Visualization by: filip-baumgartner.shinyapps.io/autobazar; Data source: www.AutoBazar.eu")
       }else if(input$oput == "Scatter" &  input$log_x == TRUE & input$log_y == FALSE){
-        data5()%>%ggplot(., aes(x=log(get(input$scatter_x)), y=get(input$scatter_y)))+geom_point()+stat_smooth(method = "lm", formula = y ~ x , size = 1)+
+        data5()%>%ggplot(., aes(x=log(get(input$scatter_x)), y=get(input$scatter_y)))+geom_point(na.rm = T)+stat_smooth(method = "lm", formula = y ~ x , size = 1)+
           scale_x_log10()+labs(x=input$scatter_x, y=input$scatter_y, main="Scatter plot", subtitle=paste("Manufacturing year(s):", list(input$num)), caption="Visualization by: filip-baumgartner.shinyapps.io/autobazar; Data source: www.AutoBazar.eu")
       }else if(input$oput == "Scatter" & input$log_x == FALSE & input$log_y == TRUE){
-        data5()%>%ggplot(., aes(x=get(input$scatter_x), y=log(get(input$scatter_y))))+geom_point()+stat_smooth(method = "lm", formula = y ~ x , size = 1)+
+        data5()%>%ggplot(., aes(x=get(input$scatter_x), y=log(get(input$scatter_y))))+geom_point(na.rm = T)+stat_smooth(method = "lm", formula = y ~ x , size = 1)+
           scale_y_log10()+ labs(x=input$scatter_x, y=input$scatter_y, main="Scatter plot", subtitle=paste("Manufacturing year(s):", list(input$num)), caption="Visualization by: filip-baumgartner.shinyapps.io/autobazar; Data source: www.AutoBazar.eu")
       }else if(input$oput == "Scatter" &  input$log_x == TRUE & input$log_y == TRUE){
-        data5()%>%ggplot(., aes(x=log(get(input$scatter_x)), y=log(get(input$scatter_y))))+geom_point()+stat_smooth(method = "lm", formula = y ~ x , size = 1)+
+        data5()%>%ggplot(., aes(x=log(get(input$scatter_x)), y=log(get(input$scatter_y))))+geom_point(na.rm = T)+stat_smooth(method = "lm", formula = y ~ x , size = 1)+
           scale_y_log10()+ scale_x_log10()+labs(x=input$scatter_x, y=input$scatter_y, main="Scatter plot", subtitle=paste("Manufacturing year(s):", list(input$num)), caption="Visualization by: filip-baumgartner.shinyapps.io/autobazar; Data source: www.AutoBazar.eu")
         
         }})
     
-    output$legend <- renderText({
-      if (input$comparison == "Yes"){
-        "BE CAREFUL! Free scales of axis! Do NOT compare counts only via looking on bars, but SEE axis and values of counts!"
-      }
-      if (input$oput == "Prices"){
+
+    
+    data_tree_true <- eventReactive(input$go, {
+      km_lower = input$km_tree - 30000
+      km_upper = input$km_tree + 30000
+      kw_lower = input$kw_tree - 20
+      kw_upper = input$kw_tree + 20 
       
-       "Red Dot = Mean Price
- 
-       "
-      }else if(input$oput == "Prices" | (input$oput == "Counts" & input$comparison == "Yes") | (input$oput == "Distributions" & input$dist_gen == FALSE)){
-        "BE CAREFUL! Free scales of axis! Do NOT compare counts only via looking on bars, but SEE axis and values of counts!" 
-      }
-    })
+      top10_brands %>% filter(brand == input$bar2 & year_data == input$year_tree & diesel_data == input$fuel_factor & transmission_data == input$transmission_factor& 
+                                 type_data == input$type_factor & quattro == input$quattro_factor & (kw_data > kw_lower & kw_data < kw_upper) & (km_data >km_lower & km_data <km_upper))%>%
+        rename(Brand = brand, Model = model,Name = name_data, PRICE = price_data,Year = year_data, Region = region_data, Fuel = diesel_data , Transmission = transmission_data,
+               Mileage_km = km_data ,Power_kW = kw_data, Body_Type = type_data, Quattro = quattro)
+      
+      })
+
+    
+    data_tree <- eventReactive(input$go, {data.frame(brand = input$bar2, year_data = input$year_tree, diesel_data= input$fuel_factor, transmission_data = input$transmission_factor, 
+                                       km_data = input$km_tree, kw_data = input$kw_tree, type_data = input$type_factor, quattro = input$quattro_factor)}) 
+   output$tree <- renderPrint({ print(round(predict(forest, data_tree()),0))})
+   output$true <- renderTable(print(data_tree_true()))
+   
+   
+    
     output$markdown <- renderUI({
       HTML(markdown::markdownToHTML(knit('markdown.Rmd', quiet = TRUE)))
     })
+    
+   
+    
+    output$modelmarkdown <- renderUI({
+     HTML(markdown::markdownToHTML(knit('model_markdown.Rmd', quiet = TRUE)))
+   })
     
     }
 
