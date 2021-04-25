@@ -1,0 +1,243 @@
+---
+title: "Predictor"
+author: "Filip Baumgartner"
+date: "23 4 2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(stringr)
+library(forcats)
+library(caret)
+library(randomForest)
+library(gridExtra)
+library(e1071)
+library(ranger)
+
+autobazar <- read.csv("data/autobazar_shiny_final.csv", encoding="UTF-8", header=T)
+model.tree2_250 <- readRDS("data/model.tree2_250.rds")
+model.lm <- readRDS("data/model.lm.rds")
+```
+
+## Content:
+
+**1. Data Pre-Processing & Explanatory**  
+**2. Model(s)**
+
+### R-Codes on [GitHub](https://github.com/dske852/used-cars):
+
+1. [Web-Scraper](https://github.com/dske852/used-cars/blob/main/web-scraper.R)
+2. [Data-Cleaning](https://github.com/dske852/used-cars/blob/main/cars-cleaning.R)
+3. [Building Price Predictor Models](https://github.com/dske852/used-cars/blob/main/model.R)
+4. [ShinyApp](https://github.com/dske852/used-cars/blob/main/app.R)
+
+# 1. Data Pre-Processing & Explanatory
+At the beginning, it is necessary to note, **that data majority of problematic data were cleaned and handled before dealing with models** (for visualization dashboad), thus there were not many tasks required while data pre-processing for modeling purposes. This process can be found on [Git-Hub](https://github.com/dske852/used-cars/blob/main/cars-cleaning.R) in the form of R code.
+
+Model is built to predict prices only **for 10 most offered (sold) car's brands**. There are several reasons supporting this decision. One of them is saving computational power, the second one is to include only brands with sufficient amount of observations. Thus, firstly it is necessary to filter those data and create a new dataset containing only observations of top 10 brands.
+
+```{r 1, eval=TRUE}
+##filtering and creating new dataset for only top 10 sold brands
+
+filter_top <- autobazar%>%count(brand, sort=T)%>%slice(1:10)
+top10_brands <- filter(autobazar, brand %in% filter_top$brand & year_data >1999)
+```
+
+```{r variables, eval=TRUE, include= FALSE}
+top10_brands$brand <- as.factor(top10_brands$brand)
+top10_brands$diesel_data <- as.factor(top10_brands$diesel_data)
+top10_brands$transmission_data <- as.factor(top10_brands$transmission_data)
+top10_brands$type_data<-as.factor(top10_brands$type_data)
+top10_brands$quattro<-as.factor(top10_brands$quattro)
+top10_brands$year_data<-as.numeric(top10_brands$year_data)
+```
+
+
+```{r 2, eval=TRUE}
+summary(top10_brands)
+```
+
+### Dealing with Missing Data
+
+In the case of missing data, there are not many of them. However, one variable contains slightly more missing observations than others, namely variable providing information about engine's power (kw_data). Thus, it was decided to replace all those missing data by value of mean kWs of each brand separately. Other missing observations were deleted.  
+```{r 3, eval=TRUE, fig.align="center"}
+visdat::vis_miss(top10_brands)
+```
+
+```{r 4, eval=TRUE, message = FALSE, warning = FALSE}
+#loops to calculate mean power for each brand and then replace missing data
+
+for (b in c(unique(top10_brands$brand))){
+  mean_kw <- as.numeric(top10_brands%>%filter(brand == b)%>%group_by(brand)%>%summarise(m=mean(kw_data, na.rm=T)))  
+  mis <- which(top10_brands$brand == b & is.na(top10_brands$kw_data)==TRUE)
+  top10_brands[mis, 7] <- mean_kw[2]
+}
+
+top10_brands<- na.omit(top10_brands)
+
+```
+
+### Outliers 
+Majority of problematic observations were already cleaned for visualization purposes and so there are not many outliers that would not make sense. Graphs are displayed by brands to better understand all outliers, meaning, if BMW has power 500kW it is reasonable, while it does not make any sense in the case of Kia.  By visual inspection, it was necessary to remove two really non-sense outliers in the case of brand Kia. 
+
+```{r 5, eval=TRUE, echo=FALSE, warning=FALSE, fig.align="center"}
+#Boxplots to detect outliers
+
+top10_brands%>%group_by(brand)%>%ggplot(.,aes(price_data))+geom_boxplot()+facet_wrap(~brand)+labs(x="Price")
+top10_brands%>%group_by(brand)%>%ggplot(.,aes(km_data))+geom_boxplot()+facet_wrap(~brand)+labs(x="Mileage (km)")
+top10_brands%>%group_by(brand)%>%ggplot(.,aes(kw_data))+geom_boxplot()+facet_wrap(~brand)+labs(x="Power (kW)")
+```
+
+
+```{r 6, eval=TRUE}
+#Deleting outliers
+
+outlier <- which((top10_brands$brand == "Kia" & top10_brands$price_data >150000) | (top10_brands$brand == "Kia" & top10_brands$kw_data >550))
+top10_brands<-top10_brands[-outlier, ]
+```
+
+### Relationships 
+
+```{r 8, eval=TRUE, echo=FALSE, warning = FALSE, fig.align="center"}
+#Relationships between variables
+
+top10_brands%>%group_by(brand)%>%ggplot(.,aes(log(price_data), km_data))+geom_point()+facet_wrap(~brand)+labs(x="Log(Price)", y="Mileage (km)")
+top10_brands%>%group_by(brand)%>%ggplot(.,aes(log(price_data), kw_data))+geom_point()+facet_wrap(~brand)+labs(x="Log(Price)", y="Power (kW)")
+```
+
+### Dealing with Factor Variables 
+
+Our dataset consists of several factor variables. However, some of them have too many factor levels, which is okay for visualization purposes but may cause troubles in predictive models. Thus, **less frequent categories in the variables related to car's body types were grouped into the one common category**, which resulted in reduction of factor levels from 14 to 8 levels. Also, very rare types of fuels were grouped into frequent factor levels. "Gasoline + Gas" was collapsed into "Gasoline" factor and "Hybrid" was added to "Electro" factor. 
+
+```{r 9, eval=TRUE, warning=FALSE, message = FALSE, fig.align="center"}
+#FACTORS treatments
+#Grouping less common factors into common group
+top10_brands%>%group_by(type_data)%>%count(type_data)%>%ggplot(.,aes(x=reorder(type_data,n), y=n, fill=type_data))+geom_bar(stat="identity")+coord_flip()+
+  labs(y = "Count", x= "Car's body type", main="All car's body type factor levels before reduction")
+
+top10_brands$diesel_data <-fct_collapse(top10_brands$diesel_data, Benzín = "Benzín+Plyn", Elektro = "Hybrid")
+top10_brands$type_data <-fct_collapse(top10_brands$type_data, Iné = c("Dodávka", "Van", "Iné", "Roadster", "Bus",
+                                                                      "Cabrio", "Pick up" ))
+```
+
+### Data Splitting 
+Dataset was randomly splitted into 2 datasets. Training set contains 80 % of observations and models are trained and pruned on this Training dataset. Test dataset, which contains remaining 20 % of observations is used to evaluate models' performances on the new, unknown data. 
+```{r 11, eval=TRUE}
+#DATA SPLITTING into TRAINING and TEST datasets
+
+set.seed(25892)
+trainIndex <- createDataPartition(top10_brands$price, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+
+train <- top10_brands[ trainIndex,]
+test  <- top10_brands[-trainIndex,]
+```
+
+# 2. Models
+
+**Two models** were consider for Price Predictor:  
+
+1. **Log - Linear Regression**
+2. **Random Forest Regression**
+
+However, *Log-Linear Regression is used more-less only for comparison purposes*. There are **a lot of possible relationships among explanatory variables** in this kind of dataset and **Random Forest models tend to be pretty smart in the term of finding them** without before-hand specification, as would need to be done in the case of Log-Lin Regression via using Interaction Terms. 
+
+### Training Set Resampling  
+
+To obtain stable and reliable models' results and so to be able to choose the model with the best tuning parameters, **resampling method was used while training our models**. Namely, **Repeated Cross-Validation** was chosen, with following parameters:  
+
+1. Number of Folds: 10 *(meaning the training dataset was split into 10 parts and models were permoformed on each of them)*
+2. Number of Repeats: 5 *(the whole process was repeated 5-times)*
+
+## Random Forest Regression
+
+To find Random Forest with the best performance, several models with different Tuning Parameters were deployed.
+
+### Tuning Parameters:
+
+1. **Number of Trees** to be generated: 500
+2. **Number of Randomly Selected Predictors**: 6:15 *(meaning, RF will randomly choose 6:15 predictors each of 500 times when Trees are being grown)*
+*[due to basic Rule of Thumb: (n_of_variables/3), 8 Predictors should have been selected, however different numbers of predictors were tried to make sure the best model is chosen]*
+3. **Splitting rules**: both Variance & Extra Trees
+4. **Minimal node size**: 1,5,10 *(minimal sizes of terminal nodes)*
+
+5. **Parameter to choose the best model**: RMSE (Root Mean Square Error)
+
+## Results: 
+Random Forest with splitting rule: variance, minimal node size 1 and randomly selected predictors 8 performed the best. The **very most important variable** for price evaluation is **Power** (kw_data), followed by Year of Manufacturing (year_data), Mileage (km_data), and if it is 4x4 or not. 
+
+```{r 12, eval=TRUE, fig.align="center"}
+print(model.tree2_250)
+plot(model.tree2_250)
+plot(varImp(model.tree2_250))
+densityplot(model.tree2_250, pch = "|", resamples = "all")
+
+```
+
+
+## Log-Linear Regression 
+```{r 13, eval=TRUE}
+print(model.lm)
+
+```
+
+## Comparison of models on Test Set: 
+**Random Forest Regression shows significant better performance** on both Training and Test Sets than Log-Lin Regression (expected). Thus, four purposes of our Shiny App, Random Forest model was chosen and deployed. 
+
+In conclusion, our model does probably the best he can. It was not expected to obtain error below 10%, as there are many more technical parameters impacting prices of used cars, which we were not collected and thus cannot be included in the model. However, **errors below 20%** are still sufficient enough and it can be consider as **not the best but satisfactory model**. 
+```{r comparison tables, eval=TRUE, echo=FALSE, warning=FALSE}
+#Predicted vs Observed table for RF
+p_tree <- predict(model.tree2_250, newdata = test)
+p4 <- postResample(pred = p_tree, obs = test$price_data)
+
+p_lm <- predict(model.lm, newdata = test)
+p1 <- postResample(pred = exp(p_lm), obs = test$price_data)
+
+
+perc_tree<- cbind(p_tree, test$price_data)
+
+diff <- abs(perc_tree[,2]-perc_tree[,1])
+perc2<- cbind(p_tree, test$price_data, diff, as.character(test$brand))
+perc2 <- as.data.frame(perc2)
+perc2$V4 <- as.numeric(perc2$V4)
+
+
+#Predicted vs Observed table for Reg
+
+perc<- cbind(exp(p_lm), test$price_data)
+
+diff <- abs(perc[,2]-perc[,1])
+perc1<- cbind(exp(p_lm), test$price_data, diff, as.character(test$brand))
+perc1 <- as.data.frame(perc1)
+perc1$V4 <- as.numeric(perc1$V4)
+
+#SMAPE
+
+smape_reg <- mean(abs(perc[,2]-perc[,1])/((abs(perc[,1])+abs(perc[,2]))/2))
+
+smape_rf <- mean(abs(perc_tree[,2]-perc_tree[,1])/((abs(perc_tree[,1])+abs(perc_tree[,2]))/2))
+
+
+#MAPE
+
+mape_reg <- mean(abs((perc[,2]-perc[,1])/perc[,2]), na.rm = T)
+
+mape_rf <- mean(abs((as.numeric(perc2[,2])-as.numeric(perc2[,1]))/as.numeric(perc2[,2])), na.rm = T)
+
+```
+
+
+```{r comparison, eval=TRUE,  warning=FALSE, echo=FALSE, fig.align="center"}
+table <- data.frame(c(SMAPE = round(smape_reg,2), MAPE = round(mape_reg,2), round(p1[1],0), round(p1[3],0)), c(SMAPE = round(smape_rf,2), MAPE = round(mape_rf,2),  round(p4[1],0), round(p4[3],0)))
+colnames(table) <- c("Regression", "Random Forest")
+print(table)
+
+plot1 <- bwplot(p1, xlab= "Log-Lin Regression")
+plot2<- bwplot(p4, xlab = "Random Forest Regression")
+gridExtra::grid.arrange(plot1, plot2, ncol=2)
+```
+
