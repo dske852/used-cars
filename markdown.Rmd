@@ -1,5 +1,3 @@
-###Markdown document for section "About" on the shinyapp - to describe dataset###
-
 ---
 title: "About Dataset"
 author: "Filip Baumgartner"
@@ -17,8 +15,15 @@ If you would like to obtain this dataset, report any issues, provide some new id
 1. LinkedIn: [Filip Baumgartner](https://www.linkedin.com/in/filip-baumgartner/)
 2. E-mail: baumgartner.filip [at] gmail.com
 
+### R-Codes on [GitHub](https://github.com/dske852/used-cars):
+
+1. [Web-Scraper](https://github.com/dske852/used-cars/blob/main/web-scraper.R)
+2. [Data-Cleaning](https://github.com/dske852/used-cars/blob/main/cars-cleaning.R)
+3. [Building Price Predictor Models](https://github.com/dske852/used-cars/blob/main/model.R)
+4. [ShinyApp](https://github.com/dske852/used-cars/blob/main/app.R)
+
 ### About Dataset:
-This dataset is a result of my practicing of web-scraping followed by data cleaning, filtering and visualizing in R.  
+This dataset is a result of my practicing of web-scraping, followed by data cleaning, filtering and visualizing in R.  
 [www.AutoBazar.eu](www.autobazar.eu) is one of the biggest and mainly most popular Slovak website focused on selling offers of used cars at our Slovak market.
 Dataset contains around 37 000 rows, however it does not include all data from AutoBazar.eu, due to some selections that were made.
 
@@ -54,14 +59,13 @@ summary(autobazar_shiny)
 Naturally, despite the best effort - there are some missing data in the dataset. It usually comes from the missing values on the website or in the case, if some HTML codes of specific HTML nodes on the website are formatted a bit different than on the majority of website. However, there was some additional replacing and cleaning for regional data which contained the biggest part of all missing or wrong categorized data.
 To note, all missing data were remained in the dataset and observations containing them were not deleted. Despite that, missing data were treated directly in the case, when it was needed and would lead into wrong graph output. This way makes more sense, because we can remove missing data in a Boxplot of prices, but if we had deleted those observations so they would have been missed in the case of graphs showing total count, such as Bar plots.
 
-Anyway, there are **only 0.03 % of missing data**.
 You can see the **proportions of missing data of each variable** on this graph: 
-```{r vismiss, include=TRUE, message = FALSE}
+```{r vismiss, include=TRUE, cache = TRUE, fig.align="center"}
+library(visdat)
 visdat::vis_miss(autobazar_shiny)
 ```
 
 ### Data Collecting:
-Unfortunately (or luckily?:), AutoBazar.eu does not offer any API that would allow us to connect directly at their data source and hence have them constantly imported and updated directly
-in the R environment. Thus, it was necessary to write a code for web-scrap system, which would read HTML outputs on every requested (sub)page. Happily, the **scrap is fully automatized** via several nested loops and so to update the dataset will be just a matter of clicking on "run the code" and waiting. Of course, it will stop working when some webpage elements get changed. 
+Unfortunately (or luckily?:), AutoBazar.eu does not offer any API that would allow us to connect directly on their data source and hence have them constantly imported and updated directly in the R environment. Thus, it was necessary to write a code for web-scrap system, which would read HTML outputs on every requested (sub)page. Happily, the **scrap is fully automatized** via several nested loops and so to update the dataset will be just a matter of clicking on "run the code" and waiting. Of course, it will stop working when some webpage elements get changed. 
 
 As I mentioned, web scrap code is fully automatized, which means it is capable of recognizing all models of every brand that are offered. Then it detects number of pages for each model's subpage and at the end it loops through all model's (sub)pages. Following, outputs HTML codes are read and then a bit updated and cleaned and saved into data matrix. 
